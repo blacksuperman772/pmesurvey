@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Admin — PMEPQ Submissions</title>
+<style>
+  :root{--brand:#1e3a8a;--brand2:#0e7490;--line:#e2e8f0;--ink:#1e293b;--muted:#64748b;--ok:#16a34a;--err:#dc2626}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:Inter,Segoe UI,Roboto,system-ui,Arial,sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh;padding:24px}
+  .wrap{max-width:1100px;margin:0 auto}
+  header{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:18px}
+  h1{margin:0;font-size:1.4rem;color:#fff}
+  .card{background:#111827;border:1px solid #1f2937;border-radius:14px;padding:18px;margin-bottom:18px;overflow:auto}
+  .login{max-width:360px;margin:8vh auto;background:#111827;border:1px solid #1f2937;border-radius:16px;padding:28px}
+  .login h2{margin:0 0 16px;color:#fff}
+  label{display:block;font-size:.85rem;color:#cbd5e1;margin:12px 0 6px}
+  input[type=text],input[type=password]{width:100%;padding:11px 12px;border-radius:8px;border:1px solid #334155;background:#0b1220;color:#fff;font-size:.95rem}
+  .btn{background:var(--brand);color:#fff;border:none;padding:11px 20px;border-radius:9px;font-weight:700;cursor:pointer;margin-top:16px;width:100%}
+  .btn:hover{background:#16275e}
+  .btn.sm{width:auto;padding:8px 14px;font-size:.85rem;margin:0}
+  .status{margin-top:12px;font-size:.9rem}
+  .status.err{color:#f87171} .status.ok{color:#4ade80}
+  table{border-collapse:collapse;width:100%;font-size:.82rem}
+  th,td{border:1px solid #1f2937;padding:8px 10px;text-align:left;white-space:nowrap}
+  th{background:#0b1220;color:#93c5fd;position:sticky;top:0}
+  td.wrap2{white-space:normal;max-width:260px}
+  .pill{display:inline-block;background:#0e7490;color:#fff;border-radius:999px;padding:1px 8px;font-size:.72rem;margin:1px}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+  .stat{background:#0b1220;border:1px solid #1f2937;border-radius:10px;padding:14px}
+  .stat .n{font-size:1.6rem;font-weight:800;color:#60a5fa}
+  .stat .l{font-size:.75rem;color:#94a3b8}
+  .bar{display:flex;height:14px;border-radius:7px;overflow:hidden;background:#1f2937;margin-top:4px}
+  .bar span{display:block;height:100%}
+  .hide{display:none}
+  a{color:#93c5fd}
+  select,button{font-family:inherit}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="loginView" class="login">
+    <h2>Admin Login</h2>
+    <label>Username</label>
+    <input type="text" id="user" autocomplete="username" />
+    <label>Password</label>
+    <input type="password" id="pass" autocomplete="current-password" />
+    <button class="btn" id="loginBtn">Login</button>
+    <div class="status err" id="loginStatus"></div>
+  </div>
+
+  <div id="adminView" class="hide">
+    <header>
+      <h1>PMEPQ — Submissions Dashboard</h1>
+      <div>
+        <button class="btn sm" id="refreshBtn">Refresh</button>
+        <button class="btn sm" id="exportBtn">Export CSV</button>
+        <button class="btn sm" id="logoutBtn">Logout</button>
+      </div>
+    </header>
+    <div class="card">
+      <div class="stats" id="stats"></div>
+    </div>
+    <div class="card" id="chartCard">
+      <h3 style="color:#93c5fd;margin-top:0">Mean score per statement (1–5)</h3>
+      <div id="charts"></div>
+    </div>
+    <div class="card">
+      <div style="display:flex;gap:12px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+        <input type="text" id="search" placeholder="Search gender / grade / id…" style="max-width:240px;padding:9px 12px" />
+        <label style="margin:0"><input type="checkbox" id="onlyCompleted" checked /> only complete</label>
+      </div>
+      <div style="overflow:auto;max-height:60vh">
+        <table id="tbl"></table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="survey-config.js"></script>
+<script>
+  const loginView=document.getElementById('loginView');
+  const adminView=document.getElementById('adminView');
+  const AUTH_KEY='pmepq_auth';
+  let authHeader='';
+
+  function b64(u,p){return 'Basic '+btoa(unescape(encodeURIComponent(u+':'+p)));}
+
+  async function login(){
+    const u=document.getElementById('user').value.trim();
+    const p=document.getElementById('pass').value;
+    const st=document.getElementById('loginStatus');
+    st.textContent='Verifying…'; st.className='status';
+    authHeader=b64(u,p);
+    try{
+      const r=await fetch('/api/read',{headers:{Authorization:authHeader}});
+      if(r.ok){ sessionStorage.setItem(AUTH_KEY,authHeader); showAdmin(); await load(); }
+      else { st.textContent='Invalid username or password.'; st.className='status err'; }
+    }catch(e){ st.textContent='Error: '+e.message; st.className='status err'; }
+  }
+  function showAdmin(){ loginView.classList.add('hide'); adminView.classList.remove('hide'); }
+  function logout(){ sessionStorage.removeItem(AUTH_KEY); authHeader=''; location.reload(); }
+
+  async function load(){
+    const r=await fetch('/api/read',{headers:{Authorization:authHeader}});
+    if(r.status===401){ logout(); return; }
+    const data=await r.json();
+    render(data);
+  }
+
+  function render(data){
+    const stats=document.getElementById('stats');
+    stats.innerHTML=`<div class="stat"><div class="n">${data.length}</div><div class="l">Total responses</div></div>`;
+    // completion
+    let complete=0;
+    data.forEach(d=>{ const n=(d.responses||[]).length; if(n>=17) complete++; });
+    stats.innerHTML+=`<div class="stat"><div class="n">${complete}</div><div class="l">Complete (17/17)</div></div>`;
+
+    // charts: mean per question
+    const charts=document.getElementById('charts'); charts.innerHTML='';
+    const sums={}, cnts={}, texts={};
+    SURVEY.clusters.forEach(c=>c.questions.forEach(q=>{texts[q.n]=q.text;}));
+    data.forEach(d=>(d.responses||[]).forEach(r=>{ sums[r.q]=(sums[r.q]||0)+r.value; cnts[r.q]=(cnts[r.q]||0)+1; }));
+    Object.keys(texts).sort((a,b)=>a-b).forEach(n=>{
+      const mean=cnts[n]? (sums[n]/cnts[n]):0;
+      const pct=(mean/5*100).toFixed(0);
+      const row=document.createElement('div');
+      row.style.margin='8px 0';
+      row.innerHTML=`<div style="font-size:.8rem;color:#cbd5e1">Q${n}. ${texts[n]}</div>
+        <div class="bar"><span style="width:${pct}%;background:${mean>=3.5?'#16a34a':mean>=2.5?'#f59e0b':'#dc2626'}"></span></div>
+        <div style="font-size:.72rem;color:#94a3b8">mean ${mean.toFixed(2)} · n=${cnts[n]||0}</div>`;
+      charts.appendChild(row);
+    });
+
+    // table
+    const tbl=document.getElementById('tbl');
+    const cols=['id','submittedAt',...SURVEY.biodata.map(b=>b.id),'responses'];
+    tbl.innerHTML=`<thead><tr>${cols.map(c=>{
+      const label=c==='id'?'ID':c==='submittedAt'?'Submitted':(SURVEY.biodata.find(b=>b.id===c)?SURVEY.biodata.find(b=>b.id===c).label.replace(/^\d+\.\s/,''):c);
+      return `<th>${label}</th>`;}).join('')}</tr></thead>`;
+    const tb=document.createElement('tbody');
+    const q=document.getElementById('search').value.toLowerCase();
+    const onlyC=document.getElementById('onlyCompleted').checked;
+    data.slice().reverse().forEach(d=>{
+      const respMap={}; (d.responses||[]).forEach(r=>respMap[r.q]=r.value);
+      const respStr=Object.keys(respMap).sort((a,b)=>a-b).map(k=>k+':'+respMap[k]).join(' ');
+      let bioStr=SURVEY.biodata.map(b=>d.biodata&&d.biodata[b.id]?d.biodata[b.id]:'-').join(' ');
+      if(onlyC && (d.responses||[]).length<17) return;
+      const hay=(d.id+' '+bioStr+' '+respStr).toLowerCase();
+      if(q && !hay.includes(q)) return;
+      const tr=document.createElement('tr');
+      tr.innerHTML=`<td>${d.id}</td><td>${new Date(d.submittedAt).toLocaleString()}</td>`+
+        SURVEY.biodata.map(b=>`<td>${d.biodata&&d.biodata[b.id]?d.biodata[b.id]:'-'}</td>`).join('')+
+        `<td class="wrap2">${respStr}</td>`;
+      tb.appendChild(tr);
+    });
+    tbl.appendChild(tb);
+  }
+
+  function exportCSV(){
+    fetch('/api/read',{headers:{Authorization:authHeader}}).then(r=>r.json()).then(data=>{
+      const header=['id','submittedAt',...SURVEY.biodata.map(b=>b.id),...SURVEY.clusters.flatMap(c=>c.questions.map(q=>'Q'+q.n))];
+      const rows=[header.join(',')];
+      data.forEach(d=>{
+        const respMap={}; (d.responses||[]).forEach(r=>respMap[r.q]=r.value);
+        const line=[d.id, d.submittedAt, ...SURVEY.biodata.map(b=>csv(d.biodata&&d.biodata[b.id]||'')), ...SURVEY.clusters.flatMap(c=>c.questions.map(q=>csv(respMap[q.n]!==undefined?respMap[q.n]:'')))];
+        rows.push(line.join(','));
+      });
+      const blob=new Blob([rows.join('\n')],{type:'text/csv'});
+      const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='pmepq_submissions.csv'; a.click();
+    });
+  }
+  function csv(s){ s=String(s).replace(/"/g,'""'); return /[",\n]/.test(s)?'"'+s+'"':s; }
+
+  document.getElementById('loginBtn').onclick=login;
+  document.getElementById('pass').addEventListener('keydown',e=>{if(e.key==='Enter')login();});
+  document.getElementById('logoutBtn').onclick=logout;
+  document.getElementById('refreshBtn').onclick=()=>load();
+  document.getElementById('exportBtn').onclick=exportCSV;
+  document.getElementById('search').addEventListener('input',()=>load());
+  document.getElementById('onlyCompleted').addEventListener('change',()=>load());
+
+  // restore session
+  const saved=sessionStorage.getItem(AUTH_KEY);
+  if(saved){ authHeader=saved; showAdmin(); load(); }
+</script>
+</body>
+</html>
